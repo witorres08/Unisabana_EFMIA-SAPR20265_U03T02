@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.ipynb_checkpoints/
+# los checkpoints grandes no van al repo; el mejor sí (ver README)
+checkpoints/ultimo.pt

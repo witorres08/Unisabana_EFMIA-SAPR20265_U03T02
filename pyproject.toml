@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dqn_carracing"
+version = "1.0.0"
+description = "Agente DQN desde cero para CarRacing-v3 (Gymnasium), con CNN, replay buffer y red target."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "gymnasium[box2d]>=1.1",
+    "torch>=2.2",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "matplotlib>=3.8",
+    "imageio>=2.34",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dqn_carracing"]
+
+[tool.ruff]
+line-length = 100
