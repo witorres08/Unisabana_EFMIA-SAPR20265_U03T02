@@ -1,0 +1,29 @@
+{
+  "pasos_totales": 180128,
+  "actualizaciones": 175129,
+  "episodios": 1015,
+  "minutos": 241.3,
+  "parametros": 424533,
+  "cfg": {
+    "gamma": 0.99,
+    "lr": 0.0001,
+    "lote": 32,
+    "capacidad_buffer": 120000,
+    "pasos_de_calentamiento": 5000,
+    "frecuencia_entrenamiento": 1,
+    "frecuencia_target": 2000,
+    "epsilon_inicial": 1.0,
+    "epsilon_final": 0.05,
+    "pasos_de_decaimiento": 120000,
+    "doble_dqn": true,
+    "pesos_exploracion": [
+      0.1,
+      0.2,
+      0.2,
+      0.45,
+      0.05
+    ],
+    "recorte_recompensa": 5.0,
+    "semilla": 0
+  }
+}

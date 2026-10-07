@@ -4,6 +4,9 @@
 
 Registra una fila por episodio en results/entrenamiento.csv, evalúa la política
 greedy cada `--eval-cada` pasos y guarda checkpoints (el último y el mejor).
+
+Si ya existen resultados de una corrida anterior y no se pasa --reanudar, la
+nueva corrida escribe en results/corrida_N/ para no mezclar las dos.
 """
 from __future__ import annotations
 
@@ -24,6 +27,30 @@ RESULTS = Path("results")
 CKPT = Path("checkpoints")
 
 
+def carpeta_de_salida(reanudar: bool) -> tuple[Path, Path]:
+    """Dónde escribir esta corrida, sin pisar ni mezclar una anterior.
+
+    Los CSV se abren en modo "a" para que `--reanudar` continúe el registro de
+    un entrenamiento interrumpido. El efecto indeseado es que relanzar desde
+    cero concatena dos corridas en el mismo archivo y las gráficas salen
+    mezcladas. Por eso, si ya hay resultados y NO se está reanudando, esta
+    corrida va a `results/corrida_N/` y `checkpoints/corrida_N/`.
+    """
+    if reanudar or not (RESULTS / "entrenamiento.csv").exists():
+        return RESULTS, CKPT
+
+    n = 2
+    while (RESULTS / f"corrida_{n}").exists():
+        n += 1
+    resultados, checkpoints = RESULTS / f"corrida_{n}", CKPT / f"corrida_{n}"
+    print(
+        f"[aviso] ya existe {RESULTS}/entrenamiento.csv de una corrida anterior.\n"
+        f"        Esta corrida escribe en {resultados}/ y {checkpoints}/ para no mezclarlas.\n"
+        f"        Usa --reanudar si lo que querías era continuar la corrida previa."
+    )
+    return resultados, checkpoints
+
+
 def entrenar(
     pasos_totales: int,
     cfg: Config,
@@ -31,9 +58,11 @@ def entrenar(
     eval_episodios: int = 5,
     reanudar: bool = False,
 ) -> None:
+    global RESULTS, CKPT
     torch.set_num_threads(2)
-    RESULTS.mkdir(exist_ok=True)
-    CKPT.mkdir(exist_ok=True)
+    RESULTS, CKPT = carpeta_de_salida(reanudar)
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    CKPT.mkdir(parents=True, exist_ok=True)
 
     env = entorno.crear()
     agente = (
@@ -72,7 +101,6 @@ def entrenar(
         obs, _ = env.reset(seed=int(agente.rng.integers(1_000_000)))
         total, longitud, perdidas = 0.0, 0, []
         fin = False
-        primer_paso = True
 
         while not fin:
             accion = agente.seleccionar_accion(obs)
@@ -98,7 +126,6 @@ def entrenar(
             obs = siguiente
             total += recompensa
             longitud += 1
-            primer_paso = False
 
         escritor.writerow(
             [

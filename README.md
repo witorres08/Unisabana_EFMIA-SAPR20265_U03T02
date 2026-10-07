@@ -316,6 +316,35 @@ El agente aprendió que acelerar es casi siempre la mejor acción y que frenar c
 (coherente: el costo de −0.1 por frame castiga ir despacio, y el freno de 0.8 es brusco). Usa "nada"
 como freno motor suave en las curvas.
 
+### 4.4 Segunda corrida independiente
+
+Todo el entrenamiento se repitió desde cero en otra máquina (Windows, 241 minutos en vez de 145),
+con **la misma configuración y la misma semilla**. Los artefactos de esa corrida están en
+`results/corrida_2/`; la carpeta `results/` contiene la corrida que documenta este README.
+
+| | Corrida 1 | Corrida 2 |
+|---|---|---|
+| Pasos / episodios | 180 000 / 1 010 | 180 128 / 1 015 |
+| Evaluación final (100 ep.) | **654.9 ± 184.2** | **558.2 ± 174.4** |
+| Mediana | 716.4 | 595.3 |
+| Peor / mejor episodio | 184.1 / 902.0 | 154.4 / 863.0 |
+| Episodios ≥ 500 | 78 % | 64 % |
+| Episodios negativos | 0 % | 0 % |
+
+**Las conclusiones no cambian** —el agente conduce, nunca se estrella en evaluación, supera al azar
+por casi 600 puntos— pero la diferencia de 97 puntos entre corridas es estadísticamente clara
+(Mann-Whitney, p = 0.0001). Dos lecturas:
+
+- **Misma semilla no garantiza mismo resultado.** Basta una diferencia de redondeo en una
+  multiplicación de matrices —distinto hardware, distinta versión de BLAS, distinto número de hilos—
+  para que dos trayectorias diverjan. En aprendizaje por refuerzo esa divergencia se amplifica: una
+  acción distinta cambia el estado siguiente, que cambia lo que entra al replay buffer, que cambia
+  todo lo que viene después.
+- **Reportar una sola corrida sobreestima lo que sabes.** Con n = 2 no se puede dar un intervalo de
+  confianza serio, pero el rango 558-655 es una cota inferior honesta de la variabilidad entre
+  corridas. La práctica recomendada en la literatura es 3-5 semillas y reportar media ± desviación
+  entre ellas; aquí no alcanzó el presupuesto de cómputo (cada corrida son 2.5-4 horas de CPU).
+
 ---
 
 ## 5. Reflexión sobre los resultados
@@ -400,6 +429,9 @@ python -m dqn_carracing.record --checkpoint checkpoints/mejor.pt   # GIF
 python tests/test_replay.py                                        # pruebas del buffer
 ```
 
+Relanzar `train` cuando ya hay resultados escribe en `results/corrida_N/` en vez de mezclar las dos
+corridas en el mismo CSV; para continuar una corrida interrumpida, `--reanudar`.
+
 Opciones útiles: `--sin-doble` (DQN clásico en vez de Double DQN),
 `--exploracion-uniforme` (reproduce el fallo descrito en §6.1), `--reanudar` (continúa desde el
 último checkpoint).
@@ -418,6 +450,7 @@ src/dqn_carracing/
 └── record.py     # GIF del agente
 tests/test_replay.py
 results/          # CSV del entrenamiento, JSON de evaluación, figuras, GIF
+results/corrida_2/  # segunda corrida independiente (ver §4.4)
 checkpoints/      # mejor.pt (incluido en el repo, 6.8 MB)
 ```
 

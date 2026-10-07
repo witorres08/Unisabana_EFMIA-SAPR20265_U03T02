@@ -96,6 +96,8 @@ def comparacion_final() -> None:
         return
     datos = {a.stem.replace("evaluacion_", ""): json.loads(a.read_text(encoding="utf-8")) for a in archivos}
     orden = [n for n in ("aleatorio", "mejor", "ultimo") if n in datos]
+    if not orden:          # solo hay evaluaciones con otros nombres: nada que comparar
+        return
     etiquetas = {"aleatorio": "Política aleatoria", "mejor": "DQN (mejor checkpoint)", "ultimo": "DQN (final)"}
     colores = {"aleatorio": GRIS, "mejor": AZUL, "ultimo": NARANJA}
 
