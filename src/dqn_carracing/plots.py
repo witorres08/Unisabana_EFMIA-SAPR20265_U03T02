@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import matplotlib
 
@@ -14,7 +13,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-RESULTS = Path("results")
+from dqn_carracing.paths import CORRIDA_POR_DEFECTO
+
+RESULTS = CORRIDA_POR_DEFECTO.resultados
 AZUL, NARANJA, GRIS, VERDE = "#2a78d6", "#eb6834", "#8a8a85", "#1baf7a"
 
 plt.rcParams.update(
@@ -142,6 +143,11 @@ def main() -> None:
     curva_de_aprendizaje()
     comparacion_final()
     print(f"Figuras escritas en {RESULTS}/")
+
+
+def ejecutar(_: object) -> None:
+    """Adaptador para usar las gráficas como subcomando del CLI unificado."""
+    main()
 
 
 if __name__ == "__main__":

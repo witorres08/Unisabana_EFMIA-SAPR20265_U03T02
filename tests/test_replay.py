@@ -84,6 +84,23 @@ def test_no_mezcla_episodios():
     assert np.all(primera_de_b == 200), "se filtraron frames del episodio anterior"
 
 
+def test_truncamiento_bootstrapea_con_el_estado_siguiente():
+    """Un truncamiento usa s', aunque no pueda ocupar el siguiente índice del buffer."""
+    buffer = BufferDeFrames(capacidad=10, k=4)
+    buffer.guardar(np.full((84, 84), 10, np.uint8), 0, 0.0, False, False)
+    buffer.guardar(
+        np.full((84, 84), 20, np.uint8),
+        0,
+        0.0,
+        terminal=False,
+        final=True,
+        frame_siguiente_final=np.full((84, 84), 30, np.uint8),
+    )
+
+    siguiente = buffer._siguiente_pila(1)
+    assert np.all(siguiente == np.array([10, 10, 20, 30])[:, None, None])
+
+
 if __name__ == "__main__":
     test_pilas_coinciden_con_referencia()
     test_muestreo_devuelve_formas_correctas()

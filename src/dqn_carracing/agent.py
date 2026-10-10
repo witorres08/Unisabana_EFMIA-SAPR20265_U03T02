@@ -1,41 +1,16 @@
 """El agente DQN: política ε-greedy, paso de Bellman y persistencia."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 
+from dqn_carracing.config import Config
 from dqn_carracing.model import RedQ
 from dqn_carracing.replay import BufferDeFrames
-
-
-@dataclass
-class Config:
-    """Hiperparámetros. Cada valor se justifica en el README."""
-
-    gamma: float = 0.99
-    lr: float = 1e-4
-    lote: int = 32
-    capacidad_buffer: int = 120_000
-    pasos_de_calentamiento: int = 5_000     # transiciones antes del primer gradiente
-    frecuencia_entrenamiento: int = 1       # pasos de entorno por paso de gradiente
-    frecuencia_target: int = 2_000          # pasos de gradiente entre copias a la red target
-    epsilon_inicial: float = 1.0
-    epsilon_final: float = 0.05
-    pasos_de_decaimiento: int = 120_000     # ε baja linealmente durante estos pasos
-    doble_dqn: bool = True
-    # Exploración sesgada: con 5 acciones uniformes el carro casi nunca avanza
-    # (acelerar sale 1 de cada 5 veces y basta un frenazo para pararlo), así que
-    # el buffer se llena de episodios sin una sola loseta visitada y la red nunca
-    # ve una recompensa positiva. Dar más peso al acelerador es lo que hace que
-    # la exploración produzca datos informativos. Orden: nada, derecha,
-    # izquierda, acelerar, frenar.
-    pesos_exploracion: tuple[float, ...] = (0.10, 0.20, 0.20, 0.45, 0.05)
-    recorte_recompensa: float = 5.0         # recompensas a [-5, 5] durante el entrenamiento
-    semilla: int = 0
 
 
 class AgenteDQN:

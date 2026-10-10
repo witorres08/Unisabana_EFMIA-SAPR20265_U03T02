@@ -16,7 +16,7 @@ red target, ε-greedy y paso de Bellman— está escrito en este repositorio.
 El agente completa el 78 % de los episodios con más de 500 puntos y nunca termina en negativo.
 Entrenamiento: 180 000 pasos del agente (720 000 frames del simulador) en 145 minutos de CPU.
 
-![El agente conduciendo](results/agente.gif)
+![El agente conduciendo](runs/dqn/corrida_001/agente.gif)
 
 ---
 
@@ -43,12 +43,12 @@ aquí la observación es una **imagen**, que es lo que obliga a usar una CNN y a
 | Escala de grises | 96×96×3 | 96×96 | El color no aporta: la pista es gris y el pasto verde uniforme. Reduce la entrada a un tercio. |
 | Recorte del panel | 96×96 | 84×96 | El panel cambia en cada frame sin ser información espacial; mantenerlo obliga a la red a gastar filtros en leerlo. |
 | Reescalado | 84×96 | 84×84 | Entrada cuadrada estándar de la arquitectura de Atari; `cv2.INTER_AREA` promedia al reducir y no genera aliasing. |
-| **Apilado de 4 frames** | 84×84 | **4×84×84** | **Una sola imagen no contiene velocidad.** Con un frame fijo es imposible saber si el carro va a 10 o a 80 km/h, ni si está derrapando, y la política óptima depende de eso (frenar antes de la curva). Cuatro frames consecutivos convierten el problema en markoviano. |
+| **Apilado de 4 observaciones** | 84×84 | **4×84×84** | **Una sola imagen no contiene velocidad.** La pila conserva las últimas cuatro observaciones entregadas al agente; con repetición de acción 4, corresponden aproximadamente a los frames internos `t`, `t+4`, `t+8` y `t+12`. Así la red puede inferir velocidad y derrape. |
 
 La normalización a [0, 1] (dividir entre 255) ocurre **dentro de la red**, no en el buffer: así el
 replay guarda `uint8` (1 byte por píxel) en vez de `float32` (4 bytes), un ahorro de 4× en memoria.
 
-![Lo que ve la red: 4 frames apilados en gris, 84×84](results/observacion_apilada.png)
+![Lo que ve la red: 4 frames apilados en gris, 84×84](runs/dqn/corrida_001/observacion_apilada.png)
 
 ### 1.2 Espacio de acciones
 
@@ -101,8 +101,10 @@ La distinción importa para el aprendizaje: **solo `terminated` corta el bootstr
 (`1 − done` en el objetivo). Si se trata un truncado por tiempo como terminal, se le enseña al
 agente que el mundo se acaba a los 1000 frames y que por tanto el futuro no vale nada, lo que sesga
 todos los valores hacia abajo. En el código, el buffer guarda `terminal=terminated` y
-`final=terminated or truncated` por separado: el primero entra en la ecuación de Bellman, el
-segundo solo marca dónde cortar las pilas de frames.
+`final=terminated or truncated` por separado. El primero entra en la ecuación de Bellman. El
+segundo corta las pilas para no mezclar episodios. Además, cuando el final es un truncamiento, se
+conserva de forma dispersa el último frame de `s'`: así el agente bootstrappea con el verdadero
+estado siguiente, sin usar por error el estado actual ni cruzar al episodio nuevo.
 
 El corte propio por inactividad no es parte del entorno: es una decisión de diseño que ahorró
 cerca de un tercio del tiempo de entrenamiento. Un carro parado en el pasto no genera información
@@ -119,13 +121,13 @@ flowchart TB
     end
 
     ENV -->|frame| PRE["Preprocesado<br/>gris · recorte panel · 84x84"]
-    PRE --> STACK["Apilado de 4 frames<br/>estado s = (4,84,84) uint8"]
+    PRE --> STACK["Apilado de 4 observaciones<br/>estado s = (4,84,84) uint8"]
     STACK -->|s| POL{"epsilon-greedy"}
     POL -->|"prob. eps : aleatoria sesgada<br/>(45% acelerar)"| ACT["accion a"]
     POL -->|"prob. 1-eps : argmax Q(s,·)"| ACT
     ACT -->|"repetida 4 frames,<br/>recompensas sumadas"| ENV
-    ENV -->|"r, terminated, truncated"| BUF[("Replay buffer<br/>120 000 frames sueltos<br/>849 MB")]
-    STACK -.->|"solo el frame mas reciente"| BUF
+    ENV -->|"r, terminated, truncated"| BUF[("Replay buffer<br/>120 000 frames base + s' en truncamientos<br/>~849 MB + coste disperso")]
+    STACK -.->|"frame más reciente<br/>(y s' si truncated)"| BUF
 
     BUF -->|"minibatch de 32<br/>pilas reconstruidas"| LEARN["Paso de Bellman"]
     LEARN --> QNET["Red online Q_theta<br/>424 533 parametros"]
@@ -145,8 +147,9 @@ Paso a paso, lo que ocurre en cada iteración del bucle (`train.py`):
 3. **Actuar (con repetición).** La acción se mantiene **4 frames del simulador** y las recompensas
    se suman. A 50 FPS, una acción suelta casi no mueve el carro; además esto divide por 4 el número
    de pasadas por la red, que en CPU es el cuello de botella.
-4. **Guardar.** La transición entra al replay buffer: solo el frame más reciente, la acción, la
-   recompensa recortada, y las dos banderas (`terminated` y fin de episodio).
+4. **Guardar.** La transición entra al replay buffer: el frame más reciente, la acción, la
+   recompensa recortada y las banderas `terminated` y fin de episodio. Si hubo truncamiento,
+   también se guarda de forma dispersa el último frame de `s'` para calcular el bootstrap correcto.
 5. **Aprender.** Cada paso se muestrea un minibatch de 32 transiciones y se aplica un paso de
    gradiente sobre el error de Bellman (detalle abajo).
 6. **Sincronizar.** Cada 2 000 pasos de gradiente, los pesos de la red online se copian a la red
@@ -187,7 +190,7 @@ LunarLander.
 | **La exploración uniforme no produce datos útiles** | Con 5 acciones equiprobables, el carro casi nunca avanza: en el primer intento, 40 000 pasos de entrenamiento dieron una política greedy que se quedaba quieta (−40 de recompensa, exactamente el costo de estar parado) | **Exploración sesgada**: durante los pasos aleatorios, acelerar sale el 45 % de las veces y frenar el 5 %. Con el mismo presupuesto, la evaluación a 20 000 pasos pasó de −40 a +90 |
 | **Pista nueva en cada episodio** | El agente no puede memorizar un circuito; tiene que generalizar | Es una ventaja: evaluamos sobre 100 semillas fijas, todas pistas distintas |
 | **Costo de simulación alto** | El renderizado domina: ~160 frames/s en CPU, independientemente de la red | Repetición de acción (4), red más pequeña, corte por inactividad |
-| **Memoria del replay** | Guardar (s, s') apilados costaría 56 KB por transición → 6.7 GB | El buffer guarda **frames sueltos** y reconstruye las pilas al muestrear: 7 KB por transición, 849 MB en total |
+| **Memoria del replay** | Guardar (s, s') apilados costaría 56 KB por transición → 6.7 GB | El buffer guarda **frames sueltos** y reconstruye las pilas al muestrear: ~849 MB, más un coste pequeño y disperso para el frame `s'` de transiciones truncadas |
 
 ---
 
@@ -253,7 +256,7 @@ Entrada: (lote, 4, 84, 84) uint8 → float / 255
 
 ### 4.1 Curva de aprendizaje
 
-![Curva de aprendizaje](results/curva_aprendizaje.png)
+![Curva de aprendizaje](runs/dqn/corrida_001/curva_aprendizaje.png)
 
 Izquierda: recompensa por episodio durante el entrenamiento (azul claro: episodios sueltos; azul
 oscuro: media móvil de 30) y evaluaciones periódicas con política greedy (naranja, 5 episodios,
@@ -282,7 +285,7 @@ Evaluaciones periódicas (política greedy, 5 episodios cada una):
 100 episodios con política **puramente greedy**, sobre las **mismas 100 semillas** (pistas) para
 ambos agentes:
 
-![Comparación con el baseline](results/comparacion.png)
+![Comparación con el baseline](runs/dqn/corrida_001/comparacion.png)
 
 | Métrica | Política aleatoria | DQN entrenado |
 |---|---|---|
@@ -320,7 +323,7 @@ como freno motor suave en las curvas.
 
 Todo el entrenamiento se repitió desde cero en otra máquina (Windows, 241 minutos en vez de 145),
 con **la misma configuración y la misma semilla**. Los artefactos de esa corrida están en
-`results/corrida_2/`; la carpeta `results/` contiene la corrida que documenta este README.
+`runs/dqn/corrida_002/`; la carpeta `runs/dqn/corrida_001/` contiene la corrida que documenta este README.
 
 | | Corrida 1 | Corrida 2 |
 |---|---|---|
@@ -396,12 +399,12 @@ arriba del algoritmo, en los datos que la exploración genera**.
 
 **2. El replay buffer con frames apilados.** Guardar (s, s') con pilas completas habría pedido 6.7 GB.
 La alternativa —guardar frames sueltos y reconstruir las pilas al muestrear— es ocho veces más
-barata, pero introduce dos errores silenciosos muy fáciles de cometer: mezclar frames de dos
-episodios distintos en una misma pila, y cruzar la cabeza de escritura del buffer circular (donde el
-frame "anterior" es en realidad el más nuevo). Ninguno de los dos hace fallar el programa: solo
-degradan el aprendizaje sin dejar rastro. Por eso el repositorio incluye `tests/test_replay.py`, que
-compara transición por transición contra una implementación ingenua que guarda las pilas completas.
-La primera versión del código fallaba esa prueba.
+barata, pero introduce tres errores silenciosos muy fáciles de cometer: mezclar frames de episodios
+distintos, cruzar la cabeza de escritura del buffer circular, o usar `s` en lugar del verdadero `s'`
+al bootstrappear una transición truncada. Ninguno hace fallar el programa: solo degradan el
+aprendizaje sin dejar rastro. Por eso el repositorio incluye `tests/test_replay.py`, que compara
+transición por transición contra una implementación ingenua que guarda las pilas completas. La
+primera versión del código fallaba esa prueba.
 
 **3. El cómputo, pero no como se esperaba.** El cuello de botella no fue la red (424 k parámetros son
 nada) sino **el renderizado del simulador**: ~160 frames/s, y no hay forma de acelerarlo sin GPU ni
@@ -421,16 +424,16 @@ enseña al agente que el mundo se acaba a los 1000 frames.
 ```bash
 pip install -e .            # o: pip install -r requirements.txt
 
-python -m dqn_carracing.train --pasos 180000        # ~145 min en 2 CPU
-python -m dqn_carracing.evaluate --checkpoint checkpoints/mejor.pt --episodios 100
-python -m dqn_carracing.evaluate --aleatorio --episodios 100       # baseline
-python -m dqn_carracing.plots                                      # figuras
-python -m dqn_carracing.record --checkpoint checkpoints/mejor.pt   # GIF
-python tests/test_replay.py                                        # pruebas del buffer
+uv run dqn-carracing train --pasos 180000        # ~145 min en 2 CPU
+uv run dqn-carracing evaluate --episodios 100
+uv run dqn-carracing evaluate --aleatorio --episodios 100       # baseline
+uv run dqn-carracing plot                                      # figuras
+uv run dqn-carracing record                                    # GIF
+uv run pytest -q                                               # pruebas
 ```
 
-Relanzar `train` cuando ya hay resultados escribe en `results/corrida_N/` en vez de mezclar las dos
-corridas en el mismo CSV; para continuar una corrida interrumpida, `--reanudar`.
+Relanzar `train` cuando ya existe la corrida principal escribe en `runs/dqn/corrida_NNN/` en vez de
+mezclar las dos corridas en el mismo CSV; para continuar la corrida principal interrumpida, `--reanudar`.
 
 Opciones útiles: `--sin-doble` (DQN clásico en vez de Double DQN),
 `--exploracion-uniforme` (reproduce el fallo descrito en §6.1), `--reanudar` (continúa desde el
@@ -440,6 +443,9 @@ Opciones útiles: `--sin-doble` (DQN clásico en vez de Double DQN),
 
 ```
 src/dqn_carracing/
+├── cli.py        # CLI: train, evaluate, record y plot
+├── config.py     # hiperparámetros del experimento
+├── paths.py      # selección de directorios por corrida
 ├── env.py        # preprocesamiento: gris, recorte, repetición de acción, apilado
 ├── model.py      # la CNN (424 533 parámetros)
 ├── replay.py     # replay buffer de frames sueltos
@@ -448,10 +454,10 @@ src/dqn_carracing/
 ├── evaluate.py   # evaluación greedy y baseline aleatorio
 ├── plots.py      # curva de aprendizaje y comparación
 └── record.py     # GIF del agente
-tests/test_replay.py
-results/          # CSV del entrenamiento, JSON de evaluación, figuras, GIF
-results/corrida_2/  # segunda corrida independiente (ver §4.4)
-checkpoints/      # mejor.pt (incluido en el repo, 6.8 MB)
+tests/            # pruebas de buffer, rutas y CLI
+runs/dqn/
+├── corrida_001/  # primera corrida: métricas, figuras y checkpoints/
+└── corrida_002/  # segunda corrida independiente (ver §4.4)
 ```
 
 Versiones usadas: Python 3.11, gymnasium 1.3.0, torch 2.14.0 (CPU), numpy 2.x, opencv 4.13.
