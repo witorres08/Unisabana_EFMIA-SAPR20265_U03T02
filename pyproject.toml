@@ -22,3 +22,8 @@ packages = ["src/dqn_carracing"]
 
 [tool.ruff]
 line-length = 100
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
