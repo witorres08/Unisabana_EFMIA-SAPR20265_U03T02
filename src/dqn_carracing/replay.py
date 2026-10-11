@@ -12,7 +12,9 @@ en el que se tomó `accion[i]`. Entonces
     estado'(i)    = frames[i-k+2 .. i+1]
 
 sin cruzar el inicio de un episodio (los frames que faltan se repiten) ni la
-cabeza de escritura del buffer circular (esas muestras se descartan).
+cabeza de escritura del buffer circular (esas muestras se descartan). En un
+truncamiento se guarda además, de forma dispersa, el último frame de ``s'``:
+no pertenece al episodio siguiente, pero sí se necesita para bootstrappear.
 """
 from __future__ import annotations
 
@@ -32,6 +34,9 @@ class BufferDeFrames:
         self.recompensas = np.zeros(capacidad, dtype=np.float32)
         self.terminales = np.zeros(capacidad, dtype=np.float32)  # 1.0 solo si `terminated`
         self.finales = np.zeros(capacidad, dtype=bool)           # último paso del episodio
+        # Solo los truncamientos requieren un frame fuera de la secuencia normal.
+        # Un dict evita reservar otros 849 MB para una matriz completa.
+        self.frames_siguientes_finales: dict[int, np.ndarray] = {}
         self.pos = 0
         self.llenos = 0
 
@@ -39,7 +44,13 @@ class BufferDeFrames:
         return self.llenos
 
     def guardar(
-        self, frame: np.ndarray, accion: int, recompensa: float, terminal: bool, final: bool
+        self,
+        frame: np.ndarray,
+        accion: int,
+        recompensa: float,
+        terminal: bool,
+        final: bool,
+        frame_siguiente_final: np.ndarray | None = None,
     ) -> None:
         """Guarda un paso.
 
@@ -47,13 +58,23 @@ class BufferDeFrames:
                   así que no hay valor futuro que estimar.
         final:    el episodio se acabó por cualquier razón (incluye truncado),
                   así que el frame siguiente pertenece a otro episodio.
+        frame_siguiente_final: último frame de ``s'`` si el episodio fue
+                  truncado. Se usa para bootstrappear sin cruzar episodios.
         """
+        if final and not terminal and frame_siguiente_final is None:
+            raise ValueError("un truncamiento requiere frame_siguiente_final")
+        if frame_siguiente_final is not None and (not final or terminal):
+            raise ValueError("frame_siguiente_final solo corresponde a un truncamiento")
+
         i = self.pos
+        self.frames_siguientes_finales.pop(i, None)
         self.frames[i] = frame
         self.acciones[i] = accion
         self.recompensas[i] = recompensa
         self.terminales[i] = float(terminal)
         self.finales[i] = final
+        if frame_siguiente_final is not None:
+            self.frames_siguientes_finales[i] = frame_siguiente_final.copy()
         self.pos = (i + 1) % self.capacidad
         self.llenos = min(self.llenos + 1, self.capacidad)
 
@@ -81,6 +102,17 @@ class BufferDeFrames:
                 indices.append(anterior)
         return self.frames[indices[::-1]]
 
+    def _siguiente_pila(self, i: int) -> np.ndarray:
+        """Reconstruye ``s'`` sin perder bootstrap en un truncamiento."""
+        estado = self._pila(i)
+        if not self.finales[i]:
+            return self._pila((i + 1) % self.capacidad)
+        if self.terminales[i]:
+            return estado  # No importa: el objetivo lo anula con (1 - terminal).
+
+        frame_siguiente = self.frames_siguientes_finales[i]
+        return np.concatenate((estado[1:], frame_siguiente[None]), axis=0)
+
     def muestrear(self, lote: int, rng: np.random.Generator) -> tuple[np.ndarray, ...]:
         """(estados, acciones, recompensas, siguientes, terminales) de un lote aleatorio."""
         estados = np.empty((lote, self.k, ALTO, ANCHO), dtype=np.uint8)
@@ -95,9 +127,7 @@ class BufferDeFrames:
             if not self._valido(i):
                 continue
             estados[n] = self._pila(i)
-            siguientes[n] = (
-                estados[n] if self.finales[i] else self._pila((i + 1) % self.capacidad)
-            )
+            siguientes[n] = self._siguiente_pila(i)
             acciones[n] = self.acciones[i]
             recompensas[n] = self.recompensas[i]
             terminales[n] = self.terminales[i]
@@ -111,4 +141,5 @@ class BufferDeFrames:
             + self.recompensas.nbytes
             + self.terminales.nbytes
             + self.finales.nbytes
+            + sum(frame.nbytes for frame in self.frames_siguientes_finales.values())
         ) / 1e6

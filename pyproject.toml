@@ -14,11 +14,20 @@ dependencies = [
     "numpy>=1.26",
     "opencv-python-headless>=4.9",
     "matplotlib>=3.8",
+    "pandas>=2.2",
     "imageio>=2.34",
 ]
+
+[project.scripts]
+dqn-carracing = "dqn_carracing.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dqn_carracing"]
 
 [tool.ruff]
 line-length = 100
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

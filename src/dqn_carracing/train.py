@@ -2,11 +2,11 @@
 
     python -m dqn_carracing.train --pasos 400000
 
-Registra una fila por episodio en results/entrenamiento.csv, evalúa la política
+Registra una fila por episodio en la carpeta de la corrida, evalúa la política
 greedy cada `--eval-cada` pasos y guarda checkpoints (el último y el mejor).
 
-Si ya existen resultados de una corrida anterior y no se pasa --reanudar, la
-nueva corrida escribe en results/corrida_N/ para no mezclar las dos.
+Si ya existe una corrida principal y no se pasa --reanudar, la nueva corrida
+escribe en runs/dqn/corrida_NNN/ para no mezclar las dos.
 """
 from __future__ import annotations
 
@@ -14,60 +14,39 @@ import argparse
 import csv
 import json
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 
 from dqn_carracing import env as entorno
-from dqn_carracing.agent import AgenteDQN, Config
+from dqn_carracing.agent import AgenteDQN
+from dqn_carracing.config import Config
 from dqn_carracing.evaluate import evaluar
-
-RESULTS = Path("results")
-CKPT = Path("checkpoints")
-
-
-def carpeta_de_salida(reanudar: bool) -> tuple[Path, Path]:
-    """Dónde escribir esta corrida, sin pisar ni mezclar una anterior.
-
-    Los CSV se abren en modo "a" para que `--reanudar` continúe el registro de
-    un entrenamiento interrumpido. El efecto indeseado es que relanzar desde
-    cero concatena dos corridas en el mismo archivo y las gráficas salen
-    mezcladas. Por eso, si ya hay resultados y NO se está reanudando, esta
-    corrida va a `results/corrida_N/` y `checkpoints/corrida_N/`.
-    """
-    if reanudar or not (RESULTS / "entrenamiento.csv").exists():
-        return RESULTS, CKPT
-
-    n = 2
-    while (RESULTS / f"corrida_{n}").exists():
-        n += 1
-    resultados, checkpoints = RESULTS / f"corrida_{n}", CKPT / f"corrida_{n}"
-    print(
-        f"[aviso] ya existe {RESULTS}/entrenamiento.csv de una corrida anterior.\n"
-        f"        Esta corrida escribe en {resultados}/ y {checkpoints}/ para no mezclarlas.\n"
-        f"        Usa --reanudar si lo que querías era continuar la corrida previa."
-    )
-    return resultados, checkpoints
+from dqn_carracing.paths import RutasCorrida, seleccionar_rutas
 
 
 def entrenar(
     pasos_totales: int,
     cfg: Config,
+    rutas: RutasCorrida,
     eval_cada: int = 25_000,
     eval_episodios: int = 5,
     reanudar: bool = False,
 ) -> None:
-    global RESULTS, CKPT
+    ultimo_checkpoint = rutas.checkpoints / "ultimo.pt"
+    if reanudar and not ultimo_checkpoint.is_file():
+        raise FileNotFoundError(
+            f"No se puede reanudar {rutas.raiz}: falta {ultimo_checkpoint.name}. "
+            "Inicia una corrida nueva sin --reanudar."
+        )
+
     torch.set_num_threads(2)
-    RESULTS, CKPT = carpeta_de_salida(reanudar)
-    RESULTS.mkdir(parents=True, exist_ok=True)
-    CKPT.mkdir(parents=True, exist_ok=True)
+    rutas.preparar()
 
     env = entorno.crear()
     agente = (
-        AgenteDQN.cargar(CKPT / "ultimo.pt")
-        if reanudar and (CKPT / "ultimo.pt").exists()
+        AgenteDQN.cargar(ultimo_checkpoint)
+        if reanudar
         else AgenteDQN(n_acciones=env.action_space.n, cfg=cfg)
     )
     print(
@@ -75,7 +54,7 @@ def entrenar(
         f"buffer: {agente.buffer.memoria_mb():.0f} MB | acciones: {entorno.ACCIONES}"
     )
 
-    csv_path = RESULTS / "entrenamiento.csv"
+    csv_path = rutas.resultados / "entrenamiento.csv"
     nuevo = not csv_path.exists()
     f_csv = open(csv_path, "a", newline="", encoding="utf-8")
     escritor = csv.writer(f_csv)
@@ -84,7 +63,7 @@ def entrenar(
             ["episodio", "pasos", "recompensa", "longitud", "epsilon", "perdida", "segundos"]
         )
 
-    eval_path = RESULTS / "evaluaciones.csv"
+    eval_path = rutas.resultados / "evaluaciones.csv"
     nuevo_eval = not eval_path.exists()
     f_eval = open(eval_path, "a", newline="", encoding="utf-8")
     escritor_eval = csv.writer(f_eval)
@@ -116,6 +95,8 @@ def entrenar(
                 ),
                 terminal=terminado,          # truncado NO corta el bootstrapping
                 final=fin,
+                # En un truncamiento sí hay bootstrap: conservar s' evita usar s por error.
+                frame_siguiente_final=siguiente[-1] if truncado and not terminado else None,
             )
             agente.pasos += 1
             if agente.pasos % cfg.frecuencia_entrenamiento == 0:
@@ -158,14 +139,14 @@ def entrenar(
             print(f"  [eval] pasos {agente.pasos:,}: {media:.1f} ± {de:.1f}", flush=True)
             if media > mejor_eval:
                 mejor_eval = media
-                agente.guardar(CKPT / "mejor.pt")
-            agente.guardar(CKPT / "ultimo.pt")
+                agente.guardar(rutas.checkpoints / "mejor.pt")
+            agente.guardar(rutas.checkpoints / "ultimo.pt")
 
-    agente.guardar(CKPT / "ultimo.pt")
+    agente.guardar(rutas.checkpoints / "ultimo.pt")
     env.close()
     f_csv.close()
     f_eval.close()
-    (RESULTS / "config.json").write_text(
+    (rutas.resultados / "config.json").write_text(
         json.dumps(
             {
                 "pasos_totales": agente.pasos,
@@ -183,8 +164,8 @@ def entrenar(
     print(f"Listo: {agente.pasos:,} pasos en {(time.time() - t0) / 60:.1f} min")
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description="Entrena DQN en CarRacing-v3 discreto")
+def agregar_argumentos(p: argparse.ArgumentParser) -> None:
+    """Registra las opciones del subcomando ``train`` en un parser."""
     p.add_argument("--pasos", type=int, default=400_000)
     p.add_argument("--eval-cada", type=int, default=25_000)
     p.add_argument("--eval-episodios", type=int, default=5)
@@ -197,12 +178,22 @@ def main() -> None:
         help="ε-greedy uniforme en vez de sesgada hacia el acelerador",
     )
     p.add_argument("--reanudar", action="store_true")
-    a = p.parse_args()
 
+
+def ejecutar(a: argparse.Namespace) -> None:
+    """Construye la configuración y ejecuta el entrenamiento solicitado por el CLI."""
     cfg = Config(lr=a.lr, semilla=a.semilla, doble_dqn=not a.sin_doble)
     if a.exploracion_uniforme:
         cfg.pesos_exploracion = (1.0,) * 5
-    entrenar(a.pasos, cfg, a.eval_cada, a.eval_episodios, a.reanudar)
+    rutas = seleccionar_rutas(a.reanudar)
+    entrenar(a.pasos, cfg, rutas, a.eval_cada, a.eval_episodios, a.reanudar)
+
+
+def main() -> None:
+    """Punto de entrada compatible con ``python -m dqn_carracing.train``."""
+    parser = argparse.ArgumentParser(description="Entrena DQN en CarRacing-v3 discreto")
+    agregar_argumentos(parser)
+    ejecutar(parser.parse_args())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """Evaluación de una política, sin aprendizaje ni exploración.
 
-    python -m dqn_carracing.evaluate --checkpoint checkpoints/mejor.pt --episodios 100
+    dqn-carracing evaluate --checkpoint runs/dqn/corrida_001/checkpoints/mejor.pt --episodios 100
     python -m dqn_carracing.evaluate --aleatorio --episodios 100
 """
 from __future__ import annotations
@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from dqn_carracing import env as entorno
+from dqn_carracing.paths import CORRIDA_POR_DEFECTO
 
 
 def evaluar(
@@ -49,14 +50,16 @@ def evaluar(
     return np.array(recompensas)
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description="Evalúa un agente en CarRacing-v3")
-    p.add_argument("--checkpoint", type=Path, default=Path("checkpoints/mejor.pt"))
+def agregar_argumentos(p: argparse.ArgumentParser) -> None:
+    """Registra las opciones del subcomando ``evaluate`` en un parser."""
+    p.add_argument("--checkpoint", type=Path, default=CORRIDA_POR_DEFECTO.checkpoints / "mejor.pt")
     p.add_argument("--episodios", type=int, default=100)
     p.add_argument("--aleatorio", action="store_true", help="política aleatoria (baseline)")
     p.add_argument("--salida", type=Path, default=None)
-    a = p.parse_args()
 
+
+def ejecutar(a: argparse.Namespace) -> None:
+    """Evalúa el checkpoint o la política aleatoria solicitada por el CLI."""
     if a.aleatorio:
         agente, nombre = None, "aleatorio"
     else:
@@ -82,9 +85,16 @@ def main() -> None:
         f"(mediana {resumen['mediana']:.1f}, peor {resumen['peor']:.1f}, "
         f"mejor {resumen['mejor']:.1f}) sobre {a.episodios} episodios"
     )
-    salida = a.salida or Path("results") / f"evaluacion_{nombre}.json"
+    salida = a.salida or CORRIDA_POR_DEFECTO.resultados / f"evaluacion_{nombre}.json"
     salida.parent.mkdir(exist_ok=True)
     salida.write_text(json.dumps(resumen, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def main() -> None:
+    """Punto de entrada compatible con ``python -m dqn_carracing.evaluate``."""
+    parser = argparse.ArgumentParser(description="Evalúa un agente en CarRacing-v3")
+    agregar_argumentos(parser)
+    ejecutar(parser.parse_args())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """Graba un episodio del agente entrenado como GIF y guarda lo que ve la red.
 
-    python -m dqn_carracing.record --checkpoint checkpoints/mejor.pt --semilla 10000
+    dqn-carracing record --checkpoint runs/dqn/corrida_001/checkpoints/mejor.pt --semilla 10000
 """
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ import numpy as np
 
 from dqn_carracing import env as entorno
 from dqn_carracing.agent import AgenteDQN
+from dqn_carracing.paths import CORRIDA_POR_DEFECTO
 
-RESULTS = Path("results")
+RESULTS = CORRIDA_POR_DEFECTO.resultados
 
 
 def grabar(checkpoint: Path, semilla: int = 10_000, salida: Path | None = None) -> float:
@@ -44,13 +45,23 @@ def grabar(checkpoint: Path, semilla: int = 10_000, salida: Path | None = None) 
     return total
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description="Graba un episodio en GIF")
-    p.add_argument("--checkpoint", type=Path, default=Path("checkpoints/mejor.pt"))
+def agregar_argumentos(p: argparse.ArgumentParser) -> None:
+    """Registra las opciones del subcomando ``record`` en un parser."""
+    p.add_argument("--checkpoint", type=Path, default=CORRIDA_POR_DEFECTO.checkpoints / "mejor.pt")
     p.add_argument("--semilla", type=int, default=10_000)
     p.add_argument("--salida", type=Path, default=None)
-    a = p.parse_args()
+
+
+def ejecutar(a: argparse.Namespace) -> None:
+    """Graba el episodio solicitado por el CLI."""
     grabar(a.checkpoint, a.semilla, a.salida)
+
+
+def main() -> None:
+    """Punto de entrada compatible con ``python -m dqn_carracing.record``."""
+    parser = argparse.ArgumentParser(description="Graba un episodio en GIF")
+    agregar_argumentos(parser)
+    ejecutar(parser.parse_args())
 
 
 if __name__ == "__main__":
